@@ -4,6 +4,7 @@ from django.views.generic import UpdateView, DeleteView, DetailView, CreateView
 from webapp.forms import ProductForm
 from webapp.models import Product
 from webapp.views.base_views import SearchView
+from django.contrib.auth.mixins import PermissionRequiredMixin
 
 
 class IndexView(SearchView):
@@ -24,7 +25,7 @@ class ProductView(DetailView):
     queryset = Product.objects.filter(amount__gt=0)
 
 
-class ProductCreateView(CreateView):
+class ProductCreateView(PermissionRequiredMixin, CreateView):
     model = Product
     form_class = ProductForm
     template_name = 'product/product_create.html'

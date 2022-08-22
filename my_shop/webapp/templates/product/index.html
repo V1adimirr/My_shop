@@ -1,12 +1,9 @@
 {% extends 'base.html' %}
 
 {% block content %}
-    {{ request.path }}
+    <p></p>
     <h1 class="text-center">Товары</h1>
-    <div class="my-3">{% include 'partial/search.html' %}</div>
-    {% if is_paginated %}
-        {% include 'partial/pagination.html' %}
-    {% endif %}
+    <div class="my-3">{% include 'partial/search.html' %}</div><br/>
     <div class="row my-3">
         {% for product in products %}
             <div class="col-12 col-md-4 col-lg-4">
