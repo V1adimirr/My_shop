@@ -1,35 +1,28 @@
 from django.http import HttpResponseRedirect, HttpResponseBadRequest
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse, reverse_lazy
-from django.views.generic import CreateView, ListView, DeleteView
+from django.views import View
+from django.views.generic import CreateView, TemplateView
 
-from webapp.forms import CartForm, OrderForm
-from webapp.models import Cart, Product, Order, OrderProduct
+from webapp.forms import OrderForm
+from webapp.models import Product, Order, OrderProduct
 
 
-class CartAddView(CreateView):
-    model = Cart
-    form_class = CartForm
+class CartAddView(View):
 
-    def form_valid(self, form):
-        product = get_object_or_404(Product, pk=self.kwargs.get("pk"))
-        qty = form.cleaned_data.get("qty")
+    def post(self, request, pk, *args, **kwargs):
+        product = get_object_or_404(Product, pk=pk)
+        qty = int(self.request.POST.get('qty'))
         if qty > product.amount:
             return HttpResponseBadRequest(
-                f"Количество товара {product.name} всего {product.amount}. Добавить {qty} штук не получится")
+                f"Количество товара {product.name} всего {product.amount}. Добавить {qty} штук не возможно")
         else:
-            # try:
-            #     cart_product = Cart.objects.get(product=product)
-            #     cart_product.qty += qty
-            #     cart_product.save()
-            # except Cart.DoesNotExist:
-            #     Cart.objects.create(product=product, qty=qty)
-            cart_product, is_created = Cart.objects.get_or_create(product=product)
-            if is_created:
-                cart_product.qty = qty
+            cart = self.request.session.get('cart', {})
+            if str(product.pk) in cart:
+                cart[str(product.pk)] += qty
             else:
-                cart_product.qty += qty
-            cart_product.save()
+                cart[str(product.pk)] = qty
+            self.request.session['cart'] = cart
         return HttpResponseRedirect(self.get_success_url())
 
     def get_success_url(self):
@@ -39,43 +32,45 @@ class CartAddView(CreateView):
         return reverse("webapp:index")
 
 
-class CartView(ListView):
-    model = Cart
+class CartView(TemplateView):
     template_name = "cart/cart_view.html"
-    context_object_name = "cart"
 
-    def get_context_data(self, *, object_list=None, **kwargs):
-        context = super().get_context_data(object_list=None, **kwargs)
-        context['total'] = Cart.get_total()
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        cart = self.request.session.get('cart', {})
+        products = []
+        total = 0
+        for pk, qty in cart.items():
+            product = Product.objects.get(pk=pk)
+            product_total = qty * product.price
+            total += product_total
+            products.append({'product': product, 'qty': qty, 'product_total': product_total})
+        context['cart'] = products
+        context['total'] = total
         context['form'] = OrderForm()
         return context
 
 
-class CartDeleteView(DeleteView):
-    model = Cart
-    success_url = reverse_lazy('webapp:cart')
+class CartDeleteView(View):
 
-    def get(self, request, *args, **kwargs):
-        return self.delete(request, *args, **kwargs)
+    def get(self, request, pk, *args, **kwargs):
+        cart = self.request.session.get('cart', {})
+        if str(pk) in cart:
+            cart.pop(str(pk))
+            self.request.session['cart'] = cart
+        return redirect('webapp:cart')
 
 
-class CartDeleteOneView(DeleteView):
-    model = Cart
-    success_url = reverse_lazy('webapp:cart')
+class CartDeleteOneView(View):
 
-    def get(self, request, *args, **kwargs):
-        return self.delete(request, *args, **kwargs)
-
-    def delete(self, request, *args, **kwargs):
-        self.object = self.get_object()
-        success_url = self.get_success_url()
-        cart = self.object
-        cart.qty -= 1
-        if cart.qty < 1:
-            cart.delete()
-        else:
-            cart.save()
-        return HttpResponseRedirect(success_url)
+    def get(self, request, pk, *args, **kwargs):
+        cart = self.request.session.get('cart', {})
+        if str(pk) in cart:
+            cart[str(pk)] -= 1
+            if cart[str(pk)] < 1:
+                cart.pop(str(pk))
+            self.request.session['cart'] = cart
+        return redirect('webapp:cart')
 
 
 class OrderCreate(CreateView):
@@ -83,28 +78,20 @@ class OrderCreate(CreateView):
     form_class = OrderForm
     success_url = reverse_lazy('webapp:index')
 
-    # def form_valid(self, form):
-    #     order = form.save()
-    #     for item in Cart.objects.all():
-    #         OrderProduct.objects.create(product=item.product, qty=item.qty, order=order)
-    #         item.product.amount -= item.qty
-    #         item.product.save()
-    #         item.delete()
-    #
-    #     return HttpResponseRedirect(self.success_url)
-
     def form_valid(self, form):
         order = form.save()
 
         products = []
         order_products = []
+        cart = self.request.session.get('cart', {})
+        if cart:
+            for pk, qty in cart.items():
+                product = Product.objects.get(pk=pk)
+                order_products.append(OrderProduct(product=product, qty=qty, order=order))
+                product.amount -= qty
+                products.append(product)
 
-        for item in Cart.objects.all():
-            order_products.append(OrderProduct(product=item.product, qty=item.qty, order=order))
-            item.product.amount -= item.qty
-            products.append(item.product)
-
-        OrderProduct.objects.bulk_create(order_products)
-        Product.objects.bulk_update(products, ("amount",))
-        Cart.objects.all().delete()
+            OrderProduct.objects.bulk_create(order_products)
+            Product.objects.bulk_update(products, ("amount",))
+            self.request.session.pop('cart')
         return HttpResponseRedirect(self.success_url)
